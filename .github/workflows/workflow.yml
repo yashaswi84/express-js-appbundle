@@ -1,54 +1,22 @@
 name: "github-ejs-build"
-on: 
+on:
   workflow_dispatch:
     inputs:
-      rt_npm_remote_repo_id:
-        required: true
-        type: string
-        default: "carm-npmjs-remote"
-        description: "Artifactory Repository Name"
-      rt_generic_repo:
-        required: true
-        type: string
-        default: "carm-generic-dev-local"
-        description: "Artifactory Generic repository"
-      rt_helm_repo:
-        required: true
-        type: string
-        default: "carm-helm-dev-local"
-        description: "Artifactory HELM repository"
-      rt_docker_repo:
-        required: true
-        type: string
-        default: "carm-docker-dev-local"
-        description: "Artifactory Docker repository"
       docker_image_name:
         required: true
         type: string
         default: "ejs"
         description: "Docker Image name"
-      xr_enable_scan:
-        required: true
-        type: string
-        default: "false"
-        description: "Scan with Xray"
-      xr_override_fail_build:
-        required: true
-        type: string
-        default: "false"
-        description: "Set to false to ignore the fail build coming from Xray (exit code 3)"
 permissions:
-  actions: read     # for detecting the Github Actions environment
-  id-token: write   # for creating OIDC tokens for signing
-  packages: write   # for uploading attestations.
+  actions: read
+  id-token: write
+  packages: write
   contents: read
 jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      DOCKER_REPO: ${{ github.event.inputs.rt_docker_repo }}
       IMAGE_NAME: ${{ github.event.inputs.docker_image_name }}
-    # Here we install all the tools : docker buildx, QEMU, JDK 11, JFrog CLI
     steps:
       - name: Print Inputs
         run: echo "${{ toJSON(github.event.inputs) }}"
@@ -59,108 +27,25 @@ jobs:
       - name: Install Node
         uses: actions/setup-node@v4
         with:
-            node-version: 18
-      
-      - name: Setup JFrog CLI 
-        uses: jfrog/setup-jfrog-cli@v4
-        id: setup-cli
-        env:
-          JF_URL: https://${{ vars.JF_URL }}/
-          JF_PROJECT: ${{ vars.JF_PROJECT }}
+          node-version: 18
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-            oidc-provider-name: carminea-github
-            oidc-audience: carminea-audience
-      
-      - name: NPM Audit 
-        run: |
-          jf npmc --repo-resolve ${{ github.event.inputs.rt_npm_remote_repo_id }}
-          jf npm i --omit dev
-          
-          if [ ${{ github.event.inputs.xr_enable_scan }} == 'true' ]; then
-          	echo "Execute Xray scanning ..."
-          	jf audit --npm --fail=${{ github.event.inputs.xr_override_fail_build }}
-          else
-          	echo "Skip Xray scanning!!!"
-          fi
-      
-      - name: Python Configure Env
-        run: |
-          # Use a curated repository for python dependencies resolution
-          jf pip-config --repo-resolve=${{ vars.JF_PROJECT }}-python-dev   
-
+          python-version: "3.x"
+      - name: Setup JFrog Fly
+        uses: jfrog/fly-action@v1
+      - name: NPM Install
+        run: npm install --omit=dev
       - name: Python Env
-        run: |    
-          pip install --upgrade pip     
-          python3 -m pip install --upgrade pip setuptools wheel sigstore
-          wheel -h
-          pip show setuptools
-          echo $VIRTUAL_ENV
-
+        run: pip install --upgrade pip setuptools wheel
       - name: Python Build
-        run: |                                   
-          jf pip install -r requirements.txt  --module=jfrog-python-example                
-          python setup.py sdist bdist_wheel
-          cd dist && echo "hashes=$(sha256sum * | base64 -w0)" >> $GITHUB_OUTPUT
-
-      - name: Python Publish Package
         run: |
-          jf rt u dist/ ${{ vars.JF_PROJECT }}-python-dev/example-projects/ --module=jfrog-python-example
-
-      - name: Docker Authenticate
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ vars.JF_URL }}
-          username: ${{ steps.setup-cli.outputs.oidc-user }}
-          password: ${{ steps.setup-cli.outputs.oidc-token }}
-
+          pip install -r requirements.txt
+          python setup.py sdist bdist_wheel
       - name: Docker Build and Push
         uses: docker/build-push-action@v5
         id: build
         with:
           push: true
-          tags: ${{ vars.JF_URL }}/${{ env.DOCKER_REPO }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}
+          tags: ${{ env.FLY_REGISTRY_SUBDOMAIN }}/docker/${{ env.IMAGE_NAME }}:${{ github.run_number }}
           provenance: false
-      
-      #- name: Docker Scan
-      #  run: |  
-      #     jf docker pull ${{ vars.JF_URL }}/${{ env.DOCKER_REPO }}/${{ env.IMAGE_NAME }}:$GITHUB_RUN_NUMBER
-      #     jf docker scan ${{ vars.JF_URL }}/${{ env.DOCKER_REPO }}/${{ env.IMAGE_NAME }}:$GITHUB_RUN_NUMBER
-      
-      - name: Docker Add Package to Build
-        run: |  
-           echo "${{ vars.JF_URL }}/${{ env.DOCKER_REPO }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}@${{ steps.build.outputs.digest }}" > metadata.json
-           jf rt build-docker-create ${{ env.DOCKER_REPO }} --image-file metadata.json 
-      
-      - name: Publish Release Note and HELM charts
-        run: |
-          jf rt u rn/Release-Note-App-1.0.pdf ${{ github.event.inputs.rt_generic_repo }} --flat --module="release_note:$GITHUB_RUN_NUMBER"
-          jf rt u "helm/*.tgz" ${{ github.event.inputs.rt_helm_repo }} --flat --module="helm_charts:$GITHUB_RUN_NUMBER"
-      
-      - name: Publish Build Info
-        run: |
-          jf rt build-collect-env
-          jf rt build-add-git
-          jf rt build-publish
-      
-      - name: Build Scan
-        run: |            
-          jf build-scan
-      
-      #- name: Docker build and push
-      #  env:
-      #    JFROG_CLI_BUILD_PROJECT: ${{ vars.JF_PROJECT }}
-      #    JFROG_CLI_BUILD_NAME: ${{ github.event.inputs.build_name }}
-      #    JF_ENV_1: ${{ secrets.JF_SECRET_ENV_1 }}
-      #    JF_URL: https://${{ vars.JF_URL }}/
-      #  run: |
-      #    docker tag ${{ github.event.inputs.docker_image_name }}:$GITHUB_RUN_NUMBER $JF_URL/${{ github.event.inputs.rt_docker_repo }}/${{ github.event.inputs.docker_image_name }}:$GITHUB_RUN_NUMBER
-      #    docker build --build-arg JF_TOKEN=${JF_ENV_1} . -t ${{ github.event.inputs.docker_image_name }}:$GITHUB_RUN_NUMBER
-      #    jf docker push $JF_URL/${{ github.event.inputs.rt_docker_repo }}/${{ github.event.inputs.docker_image_name }}:$GITHUB_RUN_NUMBER --build-name=$JFROG_CLI_BUILD_NAME --build-number=$GITHUB_RUN_NUMBER 
-      
-      #- name: Publish build 
-      #  env:
-      #    JFROG_CLI_BUILD_PROJECT: ${{ vars.JF_PROJECT }}
-      #    JFROG_CLI_BUILD_NAME: ${{ github.event.inputs.build_name }}
-      #  run: |
-      #    jf rt bp $JFROG_CLI_BUILD_NAME $GITHUB_RUN_NUMBER
-      
