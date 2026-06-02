@@ -18,6 +18,8 @@ permissions:
 jobs:
   create-fix-pull-requests:
     runs-on: ubuntu-latest
+    # Skip when JFrog Platform repo variables are not configured (avoids JF_URL=https:/// failures).
+    if: ${{ length(vars.JF_URL) > 0 }}
     strategy:
       matrix:
         # The repository scanning will be triggered periodically on the following branches.
