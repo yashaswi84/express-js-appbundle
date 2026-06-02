@@ -18,6 +18,7 @@ permissions:
 jobs:
   create-fix-pull-requests:
     runs-on: ubuntu-latest
+    if: ${{ vars.JF_URL != '' }}
     strategy:
       matrix:
         # The repository scanning will be triggered periodically on the following branches.
