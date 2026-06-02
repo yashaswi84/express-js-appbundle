@@ -1,4 +1,4 @@
-FROM node:16.19.0
+FROM apacsoleng.jfrog.io/docker/node:16.19.0
 #ARG JF_TOKEN
 
 # Create app directory
