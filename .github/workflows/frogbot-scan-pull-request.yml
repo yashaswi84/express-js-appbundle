@@ -7,10 +7,27 @@ permissions:
   contents: read
   id-token: write
 jobs:
-  scan-pull-request:
+  frogbot-configured:
     runs-on: ubuntu-latest
-    # Skip when JFrog Platform repo variables are not configured (avoids JF_URL=https:/// failures).
-    if: ${{ length(vars.JF_URL) > 0 }}
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - name: Check JFrog Platform configuration
+        id: check
+        env:
+          JF_URL: ${{ vars.JF_URL }}
+        run: |
+          if [ -n "$JF_URL" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping Frogbot: set repository variable JF_URL to enable scans."
+          fi
+
+  scan-pull-request:
+    needs: frogbot-configured
+    if: needs.frogbot-configured.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
     # A pull request needs to be approved, before Frogbot scans it. Any GitHub user who is associated with the
     # "frogbot" GitHub environment can approve the pull request to be scanned.
     environment: frogbot

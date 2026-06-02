@@ -16,10 +16,27 @@ permissions:
   security-events: write
   id-token: write
 jobs:
-  create-fix-pull-requests:
+  frogbot-configured:
     runs-on: ubuntu-latest
-    # Skip when JFrog Platform repo variables are not configured (avoids JF_URL=https:/// failures).
-    if: ${{ length(vars.JF_URL) > 0 }}
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - name: Check JFrog Platform configuration
+        id: check
+        env:
+          JF_URL: ${{ vars.JF_URL }}
+        run: |
+          if [ -n "$JF_URL" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping Frogbot: set repository variable JF_URL to enable scans."
+          fi
+
+  create-fix-pull-requests:
+    needs: frogbot-configured
+    if: needs.frogbot-configured.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         # The repository scanning will be triggered periodically on the following branches.
